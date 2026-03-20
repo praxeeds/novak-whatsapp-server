@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys')
 const QRCode = require('qrcode');
 const pino = require('pino');
 
@@ -51,11 +51,15 @@ async function sendWebhook(event, data) {
 async function startSession(sessionId = 'default') {
   const { state, saveCreds } = await useMultiFileAuthState(`./auth_sessions/${sessionId}`);
 
-  sock = makeWASocket({
-    auth: state,
-    printQRInTerminal: false,
-    logger: pino({ level: 'silent' }),
-  });
+  const { version } = await fetchLatestBaileysVersion()
+console.log('Usando versão do WhatsApp:', version)
+
+const sock = makeWASocket({
+  auth: state,
+  printQRInTerminal: false,   // ← QR vai via webhook, não no terminal
+  version: version,           // ← usa a versão mais recente automaticamente
+})
+
 
   // Eventos de conexão
   sock.ev.on('connection.update', async (update) => {
