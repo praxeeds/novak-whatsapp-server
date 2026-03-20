@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys')
+const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const pino = require('pino');
 
@@ -9,7 +9,7 @@ app.use(cors());
 app.use(express.json());
 
 // Config
-const WEBHOOK_URL = process.env.WEBHOOK_URL; // URL da edge function whatsapp-webhook
+const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'seu-secret-aqui';
 const API_KEY = process.env.API_KEY || 'sua-api-key-aqui';
 const PORT = process.env.PORT || 3000;
@@ -50,16 +50,15 @@ async function sendWebhook(event, data) {
 // Iniciar sessão WhatsApp
 async function startSession(sessionId = 'default') {
   const { state, saveCreds } = await useMultiFileAuthState(`./auth_sessions/${sessionId}`);
+  const { version } = await fetchLatestBaileysVersion();
+  console.log('Usando versão do WhatsApp:', version);
 
-  const { version } = await fetchLatestBaileysVersion()
-console.log('Usando versão do WhatsApp:', version)
-
-const sock = makeWASocket({
-  auth: state,
-  printQRInTerminal: false,   // ← QR vai via webhook, não no terminal
-  version: version,           // ← usa a versão mais recente automaticamente
-})
-
+  sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: false,
+    version: version,
+    logger: pino({ level: 'silent' }),
+  });
 
   // Eventos de conexão
   sock.ev.on('connection.update', async (update) => {
@@ -75,12 +74,15 @@ const sock = makeWASocket({
     if (connection === 'close') {
       const reason = lastDisconnect?.error?.output?.statusCode;
       connectionStatus = 'disconnected';
+      currentQR = null;
       await sendWebhook('disconnected', { session_id: sessionId, reason });
 
-      // Reconectar se não foi logout manual
       if (reason !== DisconnectReason.loggedOut) {
-        console.log('Reconectando...');
-        setTimeout(() => startSession(sessionId), 3000);
+        console.log('Reconectando em 5s... (motivo:', reason, ')');
+        setTimeout(() => startSession(sessionId), 5000);
+      } else {
+        console.log('Logout manual detectado, não reconectando.');
+        sock = null;
       }
     }
 
@@ -97,15 +99,13 @@ const sock = makeWASocket({
     }
   });
 
-  // Salvar credenciais
   sock.ev.on('creds.update', saveCreds);
 
-  // Receber mensagens
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
 
     for (const msg of messages) {
-      if (msg.key.fromMe) continue; // Ignorar mensagens enviadas por nós
+      if (msg.key.fromMe) continue;
 
       await sendWebhook('message', {
         session_id: sessionId,
@@ -170,7 +170,6 @@ app.post('/message/send', authMiddleware, async (req, res) => {
   }
 });
 
-// Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', whatsapp: connectionStatus });
 });
