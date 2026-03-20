@@ -174,6 +174,16 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', whatsapp: connectionStatus });
 });
 
+app.post('/session/clear', authMiddleware, async (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  const sessionPath = path.join(__dirname, 'auth_sessions', req.body.session_id || 'default');
+  if (fs.existsSync(sessionPath)) {
+    fs.rmSync(sessionPath, { recursive: true });
+  }
+  res.json({ success: true, message: 'Session cleared' });
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
